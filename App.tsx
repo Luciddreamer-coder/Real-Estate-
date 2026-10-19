@@ -1,4 +1,6 @@
- LayoutDashboard, Building2, BarChart3, Home, Menu, X, Brain, Database,
+import { useState, useEffect, useCallback } from 'react';
+import {
+  LayoutDashboard, Building2, BarChart3, Home, Menu, X, Brain, Database,
 } from 'lucide-react';
 import type { Property, ViewName } from '@/types';
 import {
@@ -25,16 +27,32 @@ function App() {
   const [topProperties, setTopProperties] = useState<Property[]>([]);
   const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState('');
   const [selectedProperty, setSelectedProperty] = useState<Property | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingProperty, setEditingProperty] = useState<Property | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [propertyListRefresh, setPropertyListRefresh] = useState(0);
 
   const refresh = useCallback(async () => {
+    // Keep the sidebar count independent from the larger analytics payload.
+    // A slow full-dataset refresh must not make a successful MongoDB count
+    // appear as "MongoDB unavailable".
     const count = await getPropertyCount();
     setTotalCount(count);
-    const all = await getAllProperties(0, 10000);
-    setTopProperties(all);
+    setDataError('');
+
+    try {
+      // Load the complete dataset for charts, analytics, prediction and
+      // property comparisons. The Properties page has its own server-side
+      // pagination, so this does not control how many cards it displays.
+      const all = await getAllProperties(0, 20000);
+      setTopProperties(all);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'MongoDB property data is unavailable.';
+      console.error('Full property dataset refresh failed:', message);
+      // Keep any existing dashboard data and the accurate count visible.
+    }
   }, []);
 
   useEffect(() => {
@@ -51,19 +69,33 @@ function App() {
   }, [refresh]);
 
   const handleSave = async (p: Property) => {
-    await saveProperty(p);
-    await refresh();
+    const isNewProperty = !/^[a-f\d]{24}$/i.test(p.id);
+    const saved = await saveProperty(p);
+    if (isNewProperty) setTotalCount((current) => current + 1);
     setFormOpen(false);
     setEditingProperty(null);
+    if (selectedProperty?.id === saved.id) setSelectedProperty(saved);
+    try {
+      await refresh();
+      setPropertyListRefresh((value) => value + 1);
+    } catch (refreshError) {
+      console.error('Property saved, but refreshing the property list failed:', refreshError);
+    }
   };
 
   const handleDelete = async (id: string) => {
     await deleteProperty(id);
+    setTotalCount((current) => Math.max(0, current - 1));
     if (selectedProperty?.id === id) {
       setSelectedProperty(null);
       setView('properties');
     }
-    await refresh();
+    try {
+      await refresh();
+      setPropertyListRefresh((value) => value + 1);
+    } catch (refreshError) {
+      console.error('Property deleted, but refreshing the property list failed:', refreshError);
+    }
   };
 
   const handleAdd = () => {
@@ -93,15 +125,15 @@ function App() {
   const renderView = () => {
     switch (view) {
       case 'dashboard':
-        return <Dashboard properties={topProperties} onNavigate={handleNavigate} onAdd={handleAdd} onSelectProperty={handleSelectProperty} loading={loading} />;
+        return <Dashboard properties={topProperties} refreshKey={propertyListRefresh} onNavigate={handleNavigate} onAdd={handleAdd} onSelectProperty={handleSelectProperty} loading={loading} />;
       case 'properties':
-        return <PropertyList onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} onSelect={handleSelectProperty} />;
+        return <PropertyList refreshKey={propertyListRefresh} onAdd={handleAdd} onEdit={handleEdit} onDelete={handleDelete} onSelect={handleSelectProperty} />;
       case 'analytics':
         return <Analytics properties={topProperties} />;
       case 'prediction':
-        return <PricePrediction properties={topProperties} />;
+        return <PricePrediction properties={topProperties} refreshKey={propertyListRefresh} />;
       case 'insights':
-        return <MongoDBInsights properties={topProperties} />;
+        return <MongoDBInsights properties={topProperties} refreshKey={propertyListRefresh} />;
       case 'detail':
         if (!selectedProperty) {
           return (
@@ -126,7 +158,7 @@ function App() {
         <div className="flex flex-col items-center gap-3">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900" />
           <p className="text-sm text-slate-500">Loading Gurugram property data...</p>
-          <p className="text-xs text-slate-400">Importing ~19,500 properties from CSV</p>
+          <p className="text-xs text-slate-400">Fetching live properties from MongoDB...</p>
         </div>
       </div>
     );
@@ -176,8 +208,17 @@ function App() {
 
           <div className="border-t border-slate-200 p-4">
             <div className="rounded-xl bg-slate-50 p-3">
-              <p className="text-xs font-medium text-slate-500">{totalCount.toLocaleString('en-IN')} Properties</p>
-              <p className="mt-0.5 text-xs text-slate-400">Gurugram dataset loaded</p>
+              {dataError ? (
+                <>
+                  <p className="text-xs font-medium text-rose-700">MongoDB unavailable</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Property count could not be loaded.</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs font-medium text-slate-500">{totalCount.toLocaleString('en-IN')} Properties</p>
+                  <p className="mt-0.5 text-xs text-slate-400">Gurugram dataset loaded</p>
+                </>
+              )}
             </div>
           </div>
         </div>

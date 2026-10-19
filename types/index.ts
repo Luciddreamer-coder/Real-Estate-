@@ -1,4 +1,4 @@
-export type PropertyType = 'Apartment' | 'Floor' | 'Plot' | 'Villa' | 'House' | 'Studio';
+export type PropertyType = 'Apartment' | 'Floor' | 'Plot' | 'Villa' | 'House' | 'Penthouse' | 'Studio';
 
 export type PropertyStatus =
   | 'Ready to move'

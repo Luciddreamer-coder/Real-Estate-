@@ -16,7 +16,7 @@ export function PropertyDetail({
   onEdit: () => void;
   onSelectProperty: (id: string) => void;
 }) {
-  const pricePerSqft = property.square_feet > 0 ? Math.round(property.price / property.square_feet) : 0;
+  const displayRate = property.rate_per_sqft;
 
   // ─── Similar properties: same locality + same BHK, exclude current ────
   const similar = allProperties
@@ -78,9 +78,8 @@ export function PropertyDetail({
           <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(property.price)}</p>
         </Card>
         <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">Price / sqft</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">₹{pricePerSqft.toLocaleString('en-IN')}</p>
-          {property.rate_per_sqft > 0 && <p className="mt-1 text-xs text-slate-400">Listed: ₹{property.rate_per_sqft.toLocaleString('en-IN')}</p>}
+          <p className="text-sm font-medium text-slate-500">Rate / sqft</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">₹{displayRate.toLocaleString('en-IN')}</p>
         </Card>
         <Card className="p-5">
           <p className="text-sm font-medium text-slate-500">Area</p>
@@ -100,7 +99,7 @@ export function PropertyDetail({
           <div className="mt-4 grid grid-cols-2 gap-4">
             {property.bedrooms > 0 && <InfoRow icon={<Bed className="h-4 w-4" />} label="BHK" value={`${property.bedrooms} BHK`} />}
             <InfoRow icon={<Maximize className="h-4 w-4" />} label="Area" value={`${formatNumber(property.square_feet)} sqft`} />
-            <InfoRow icon={<IndianRupee className="h-4 w-4" />} label="Price / sqft" value={`₹${pricePerSqft.toLocaleString('en-IN')}`} />
+            <InfoRow icon={<IndianRupee className="h-4 w-4" />} label="Rate / sqft" value={`₹${displayRate.toLocaleString('en-IN')}`} />
             <InfoRow icon={<Building2 className="h-4 w-4" />} label="Property Type" value={property.property_type} />
             <InfoRow icon={<Building2 className="h-4 w-4" />} label="Builder" value={property.state} />
             <InfoRow icon={<MapPin className="h-4 w-4" />} label="Locality" value={property.city} />
@@ -162,7 +161,7 @@ export function PropertyDetail({
           <h3 className="text-sm font-semibold text-slate-900">Similar Properties in {property.city} ({property.bedrooms} BHK)</h3>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {similar.map((p) => {
-              const pPricePerSqft = p.square_feet > 0 ? Math.round(p.price / p.square_feet) : 0;
+              const pPricePerSqft = p.rate_per_sqft;
               const priceDiff = ((p.price - property.price) / property.price) * 100;
               return (
                 <div

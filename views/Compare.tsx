@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { GitCompare, Plus, X, Trophy, CheckCircle, XCircle } from 'lucide-react';
 import type { Property } from '@/types';
-import { calculateMetrics, formatCurrency, formatPct } from '@/lib/finance';
+import { formatCurrency } from '@/lib/finance';
 import { Card, Button, Badge, EmptyState } from '@/components/ui';
 
 export function Compare({
@@ -23,29 +23,18 @@ export function Compare({
     );
   };
 
-  const metrics = selected.map((p) => ({ p, m: calculateMetrics(p) }));
-  const bestCashFlow = metrics.length > 0 ? Math.max(...metrics.map((x) => x.m.monthlyCashFlow)) : 0;
-  const bestCoC = metrics.length > 0 ? Math.max(...metrics.map((x) => x.m.cashOnCashReturn)) : 0;
-  const bestCap = metrics.length > 0 ? Math.max(...metrics.map((x) => x.m.capRate)) : 0;
-  const bestPricePerSqft = metrics.length > 0 ? Math.min(...metrics.map((x) => x.p.square_feet > 0 ? x.p.price / x.p.square_feet : Infinity)) : 0;
+  const bestPricePerSqft = selected.length > 0 ? Math.min(...selected.map((p) => p.square_feet > 0 ? p.price / p.square_feet : Infinity)) : 0;
 
-  const rows: { label: string; getValue: (p: Property, m: ReturnType<typeof calculateMetrics>) => string; isBest?: (p: Property, m: ReturnType<typeof calculateMetrics>) => boolean }[] = [
+  const rows: { label: string; getValue: (p: Property) => string; isBest?: (p: Property) => boolean }[] = [
     { label: 'Price', getValue: (p) => formatCurrency(p.price) },
     { label: 'Area (sqft)', getValue: (p) => p.square_feet.toLocaleString('en-IN') },
     { label: 'Price / sqft', getValue: (p) => `₹${(p.square_feet > 0 ? Math.round(p.price / p.square_feet) : 0).toLocaleString('en-IN')}`, isBest: (p) => p.square_feet > 0 && (p.price / p.square_feet) === bestPricePerSqft },
     { label: 'BHK', getValue: (p) => p.bedrooms > 0 ? `${p.bedrooms} BHK` : '-' },
-    { label: 'Monthly Rent (est.)', getValue: (p) => formatCurrency(p.monthly_rent) },
-    { label: 'Monthly Cash Flow', getValue: (_p, m) => formatCurrency(m.monthlyCashFlow), isBest: (_p, m) => m.monthlyCashFlow === bestCashFlow },
-    { label: 'Annual Cash Flow', getValue: (_p, m) => formatCurrency(m.annualCashFlow) },
-    { label: 'Cash-on-Cash Return', getValue: (_p, m) => formatPct(m.cashOnCashReturn), isBest: (_p, m) => m.cashOnCashReturn === bestCoC },
-    { label: 'Cap Rate', getValue: (_p, m) => formatPct(m.capRate), isBest: (_p, m) => m.capRate === bestCap },
-    { label: 'Gross Rent Multiplier', getValue: (_p, m) => m.grossRentMultiplier.toFixed(2) },
-    { label: 'Debt Coverage Ratio', getValue: (_p, m) => m.debtCoverageRatio.toFixed(2) },
-    { label: '1% Rule', getValue: (_p, m) => (m.onePercentRule ? 'Pass' : 'Fail') },
     { label: 'RERA Approved', getValue: (p) => (p.rera_approved ? 'Yes' : 'No') },
     { label: 'Property Type', getValue: (p) => p.property_type },
     { label: 'Status', getValue: (p) => p.status },
     { label: 'Builder', getValue: (p) => p.state },
+    { label: 'Society', getValue: (p) => p.society || '-' },
     { label: 'Locality', getValue: (p) => p.city },
   ];
 
@@ -88,7 +77,7 @@ export function Compare({
         <EmptyState
           icon={<GitCompare className="h-6 w-6" />}
           title="No properties selected"
-          description="Add properties to compare their investment metrics side by side."
+          description="Add properties to compare their price, area, BHK, locality, and property details."
           action={properties.length > 0 ? <Button onClick={() => setShowPicker(true)}><Plus className="h-4 w-4" /> Select Properties</Button> : undefined}
         />
       ) : (
@@ -117,13 +106,13 @@ export function Compare({
               {rows.map((row, i) => (
                 <tr key={row.label} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}>
                   <td className="sticky left-0 bg-inherit px-4 py-3 text-sm font-medium text-slate-600">{row.label}</td>
-                  {metrics.map(({ p, m }) => {
-                    const isBest = row.isBest?.(p, m);
+                  {selected.map((p) => {
+                    const isBest = row.isBest?.(p);
                     return (
                       <td key={p.id} className="px-4 py-3 text-sm">
                         <span className={`font-semibold ${isBest ? 'text-emerald-600' : 'text-slate-900'}`}>
                           {isBest && <Trophy className="mr-1 inline h-3.5 w-3.5 text-amber-500" />}
-                          {row.getValue(p, m)}
+                          {row.getValue(p)}
                         </span>
                       </td>
                     );

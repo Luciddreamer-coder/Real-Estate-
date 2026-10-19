@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { Building2, MapPin, Maximize, Bed, Brain, IndianRupee, TrendingUp, Database, Loader2, ArrowRight, ArrowUpRight, ArrowDownRight, Filter, X } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Building2, MapPin, Maximize, Bed, IndianRupee, TrendingUp, Database, Loader2, ArrowUpRight, ArrowDownRight, Filter, X } from 'lucide-react';
 import type { Property, ViewName } from '@/types';
 import { formatCurrency } from '@/lib/finance';
 import { Card, StatCard, Button, Badge, ProgressBar } from '@/components/ui';
@@ -15,6 +15,13 @@ interface DashboardFilters {
   maxArea: string;
 }
 
+interface DashboardAggregation {
+  overall: { count: number; average_price: number; min_price: number; max_price: number }[];
+  by_locality: { _id: string; count: number; average_price: number | null; median_price: number | null }[];
+  by_locality_count: { _id: string; count: number; average_price: number; average_rate?: number }[];
+  locality_min_sample_size?: number;
+}
+
 const EMPTY_FILTERS: DashboardFilters = {
   locality: '', bhk: '', propertyType: '', minPrice: '', maxPrice: '', minArea: '', maxArea: '',
 };
@@ -25,15 +32,41 @@ export function Dashboard({
   onAdd,
   onSelectProperty,
   loading,
+  refreshKey,
 }: {
   properties: Property[];
   onNavigate: (v: ViewName) => void;
   onAdd: () => void;
   onSelectProperty: (id: string) => void;
   loading?: boolean;
+  refreshKey: number;
 }) {
   const [filters, setFilters] = useState<DashboardFilters>(EMPTY_FILTERS);
   const [showFilters, setShowFilters] = useState(false);
+  const [dashboardData, setDashboardData] = useState<DashboardAggregation | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState('');
+
+  const loadDashboardData = () => {
+    setDashboardLoading(true);
+    setDashboardError('');
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 30000);
+    fetch(`${(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '')}/api/dashboard`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : response.json().then((body) => Promise.reject(new Error(body.error ?? 'Dashboard aggregation failed'))))
+      .then((data: DashboardAggregation) => setDashboardData(data))
+      .catch((error) => {
+        setDashboardError(error instanceof DOMException && error.name === 'AbortError'
+          ? 'The dashboard request timed out. Check Flask and MongoDB Atlas.'
+          : error instanceof Error ? error.message : 'Dashboard aggregation failed');
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        setDashboardLoading(false);
+      });
+  };
+
+  useEffect(() => { loadDashboardData(); }, [refreshKey]);
 
   // ─── Extract filter options ───────────────────────────────────────────
   const localities = useMemo(() => [...new Set(properties.map((p) => p.city))].sort(), [properties]);
@@ -56,48 +89,75 @@ export function Dashboard({
 
   const activeFilterCount = Object.values(filters).filter((v) => v !== '').length;
 
-  if (loading || properties.length === 0) {
+  if (loading || dashboardLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
-        <span className="ml-3 text-sm text-slate-500">Loading properties...</span>
+        <span className="ml-3 text-sm text-slate-500">{dashboardLoading && !loading ? 'Loading MongoDB dashboard aggregations...' : 'Loading properties...'}</span>
+      </div>
+    );
+  }
+
+  if (dashboardError || !dashboardData) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Database className="h-10 w-10 text-rose-300" />
+        <p className="mt-3 text-sm font-medium text-slate-900">Dashboard aggregation unavailable</p>
+        <p className="mt-1 max-w-md text-xs text-slate-500">{dashboardError || 'The MongoDB dashboard response was empty.'}</p>
+        <Button className="mt-4" onClick={loadDashboardData}>Retry</Button>
       </div>
     );
   }
 
   // ─── KPI Calculations ─────────────────────────────────────────────────
-  const totalProps = filtered.length;
-  const avgPrice = totalProps > 0 ? filtered.reduce((s, p) => s + p.price, 0) / totalProps : 0;
+  const overall = dashboardData.overall[0];
+  const totalProps = activeFilterCount === 0 ? (overall?.count ?? filtered.length) : filtered.length;
+  const avgPrice = activeFilterCount === 0 ? (overall?.average_price ?? 0) : totalProps > 0 ? filtered.reduce((s, p) => s + p.price, 0) / totalProps : 0;
   const avgArea = totalProps > 0 ? filtered.reduce((s, p) => s + p.square_feet, 0) / totalProps : 0;
   const avgRatePerSqft = totalProps > 0 ? filtered.reduce((s, p) => s + p.rate_per_sqft, 0) / totalProps : 0;
 
-  // ─── Locality analysis ────────────────────────────────────────────────
-  const localityMap = new Map<string, { count: number; totalPrice: number; totalRate: number }>();
-  filtered.forEach((p) => {
-    const e = localityMap.get(p.city) ?? { count: 0, totalPrice: 0, totalRate: 0 };
-    e.count++;
-    e.totalPrice += p.price;
-    e.totalRate += p.rate_per_sqft;
-    localityMap.set(p.city, e);
+  // Locality data comes directly from MongoDB aggregation pipelines.
+  const localityAgg = dashboardData.by_locality.map((row) => {
+    const medianPrice = row.median_price;
+    return {
+      city: row._id,
+      count: Number.isFinite(row.count) ? row.count : 0,
+      avgPrice: Number.isFinite(row.average_price) ? row.average_price : null,
+      medianPrice: typeof medianPrice === 'number' && Number.isFinite(medianPrice) && medianPrice > 0 ? medianPrice : null,
+      avgRate: 0,
+    };
   });
-  const localityAgg = Array.from(localityMap.entries()).map(([city, d]) => ({
-    city, count: d.count,
-    avgPrice: d.totalPrice / d.count,
-    avgRate: d.totalRate / d.count,
+  const localityCountAgg = dashboardData.by_locality_count.map((row) => ({
+    city: row._id, count: row.count, avgPrice: row.average_price, avgRate: row.average_rate ?? 0,
   }));
 
-  const mostExpensive = [...localityAgg].filter((l) => l.count >= 3).sort((a, b) => b.avgPrice - a.avgPrice)[0];
-  const mostAffordable = [...localityAgg].filter((l) => l.count >= 3).sort((a, b) => a.avgPrice - b.avgPrice)[0];
-  const topLocalitiesByCount = [...localityAgg].sort((a, b) => b.count - a.count).slice(0, 10);
-  const topLocalitiesByPrice = [...localityAgg].sort((a, b) => b.avgPrice - a.avgPrice).slice(0, 10);
-  const maxLocalityPrice = Math.max(...topLocalitiesByPrice.map((l) => l.avgPrice), 1);
+  const localityMinimum = dashboardData.locality_min_sample_size ?? 3;
+  const eligibleLocalities = localityAgg
+    .filter((l) => l.count >= localityMinimum && l.medianPrice !== null && Number.isFinite(l.medianPrice))
+    .map((l) => ({ ...l, medianPrice: l.medianPrice as number }));
+  const mostExpensive = [...eligibleLocalities].sort((a, b) => b.medianPrice - a.medianPrice)[0];
+  const mostAffordable = [...eligibleLocalities].sort((a, b) => a.medianPrice - b.medianPrice)[0];
+  const topLocalitiesByCount = localityCountAgg;
+  const topLocalitiesByPrice = eligibleLocalities.slice(0, 10);
+  const maxLocalityPrice = Math.max(...topLocalitiesByPrice.map((l) => l.medianPrice ?? 0), 1);
   const maxLocalityCount = Math.max(...topLocalitiesByCount.map((l) => l.count), 1);
 
   // ─── Property Type distribution ───────────────────────────────────────
   const typeMap = new Map<string, number>();
+  const typePriceMap = new Map<string, { count: number; total: number }>();
   filtered.forEach((p) => typeMap.set(p.property_type, (typeMap.get(p.property_type) ?? 0) + 1));
   const typeData = Array.from(typeMap.entries()).sort((a, b) => b[1] - a[1]);
   const maxTypeCount = Math.max(...typeData.map((t) => t[1]), 1);
+  filtered.forEach((p) => {
+    const current = typePriceMap.get(p.property_type) ?? { count: 0, total: 0 };
+    current.count += 1;
+    current.total += p.price;
+    typePriceMap.set(p.property_type, current);
+  });
+  const typePriceData = Array.from(typePriceMap.entries())
+    .map(([type, value]) => ({ type, count: value.count, avgPrice: value.total / value.count }))
+    .sort((a, b) => b.avgPrice - a.avgPrice);
+  const maxTypePrice = Math.max(...typePriceData.map((t) => t.avgPrice), 1);
 
   // ─── BHK distribution ─────────────────────────────────────────────────
   const bhkMap = new Map<number, { count: number; totalPrice: number }>();
@@ -196,12 +256,12 @@ export function Dashboard({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Min Area (sqft)</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Min Area (sq ft)</label>
                 <input type="number" placeholder="0" value={filters.minArea} onChange={(e) => setFilters((f) => ({ ...f, minArea: e.target.value }))}
                   className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-slate-900" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Max Area (sqft)</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Max Area (sq ft)</label>
                 <input type="number" placeholder="∞" value={filters.maxArea} onChange={(e) => setFilters((f) => ({ ...f, maxArea: e.target.value }))}
                   className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm outline-none focus:border-slate-900" />
               </div>
@@ -217,20 +277,20 @@ export function Dashboard({
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6">
         <StatCard label="Total Properties" value={totalProps.toLocaleString('en-IN')} sublabel="Gurugram" icon={<Building2 className="h-5 w-5" />} accent="slate" />
         <StatCard label="Average Price" value={formatCurrency(avgPrice)} sublabel="All properties" icon={<IndianRupee className="h-5 w-5" />} accent="blue" />
-        <StatCard label="Avg Price/sqft" value={`₹${Math.round(avgRatePerSqft).toLocaleString('en-IN')}`} sublabel="Overall average" icon={<TrendingUp className="h-5 w-5" />} accent="amber" />
-        <StatCard label="Average Area" value={`${Math.round(avgArea).toLocaleString('en-IN')} sqft`} sublabel="All properties" icon={<Maximize className="h-5 w-5" />} accent="emerald" />
+        <StatCard label="Avg Price/sq ft" value={`₹${Math.round(avgRatePerSqft).toLocaleString('en-IN')}`} sublabel="Overall average" icon={<TrendingUp className="h-5 w-5" />} accent="amber" />
+        <StatCard label="Average Area" value={`${Math.round(avgArea).toLocaleString('en-IN')} sq ft`} sublabel="All properties" icon={<Maximize className="h-5 w-5" />} accent="emerald" />
         <StatCard label="Locations" value={localityAgg.length.toLocaleString('en-IN')} sublabel="Sectors / areas" icon={<MapPin className="h-5 w-5" />} accent="blue" />
         <StatCard
           label="Most Expensive"
-          value={mostExpensive ? formatCurrency(mostExpensive.avgPrice) : '-'}
-          sublabel={mostExpensive?.city ?? ''}
+          value={mostExpensive ? formatCurrency(mostExpensive.medianPrice) : 'Insufficient data'}
+          sublabel={mostExpensive?.city ?? `Need ${localityMinimum}+ valid prices`}
           icon={<ArrowUpRight className="h-5 w-5" />}
           accent="rose"
         />
       </div>
 
       {/* Most Expensive + Most Affordable */}
-      {mostExpensive && mostAffordable && (
+      {mostExpensive && mostAffordable ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex items-center justify-between rounded-2xl border border-rose-200 bg-rose-50 p-4">
             <div className="flex items-center gap-3">
@@ -241,8 +301,8 @@ export function Dashboard({
               </div>
             </div>
             <div className="text-right">
-              <p className="text-lg font-bold text-rose-900">{formatCurrency(mostExpensive.avgPrice)}</p>
-              <p className="text-xs text-rose-500">{mostExpensive.count} properties</p>
+              <p className="text-lg font-bold text-rose-900">{formatCurrency(mostExpensive.medianPrice)}</p>
+              <p className="text-xs text-rose-500">Median property price · {mostExpensive.count} properties</p>
             </div>
           </div>
           <div className="flex items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
@@ -254,26 +314,17 @@ export function Dashboard({
               </div>
             </div>
             <div className="text-right">
-              <p className="text-lg font-bold text-emerald-900">{formatCurrency(mostAffordable.avgPrice)}</p>
-              <p className="text-xs text-emerald-500">{mostAffordable.count} properties</p>
+              <p className="text-lg font-bold text-emerald-900">{formatCurrency(mostAffordable.medianPrice)}</p>
+              <p className="text-xs text-emerald-500">Median property price · {mostAffordable.count} properties</p>
             </div>
           </div>
         </div>
+      ) : (
+        <Card className="p-5">
+          <p className="text-sm font-semibold text-slate-900">Locality price rankings unavailable</p>
+          <p className="mt-1 text-xs text-slate-500">Insufficient data: each locality needs at least {localityMinimum} valid property prices.</p>
+        </Card>
       )}
-
-      {/* Price Prediction CTA */}
-      <div className="flex items-center justify-between rounded-2xl bg-gradient-to-r from-slate-900 to-slate-700 p-5 text-white">
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10"><Brain className="h-6 w-6" /></div>
-          <div>
-            <p className="text-sm font-semibold">ML-Powered Price Prediction</p>
-            <p className="text-xs text-slate-300">Random Forest, Gradient Boosting, Decision Tree & Linear Regression</p>
-          </div>
-        </div>
-        <Button variant="secondary" onClick={() => onNavigate('prediction')}>
-          <Brain className="h-4 w-4" /> Predict Price
-        </Button>
-      </div>
 
       {/* Area vs Price Scatter Plot + Property Type Distribution */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -288,13 +339,13 @@ export function Dashboard({
             <Building2 className="h-4 w-4 text-slate-400" /> Property Type Distribution
           </h3>
           <div className="mt-4 space-y-3">
-            {typeData.map(([type, count]) => (
+            {typePriceData.map(({ type, count, avgPrice }) => (
               <div key={type}>
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium text-slate-700">{type}</span>
-                  <span className="font-semibold text-slate-900">{count.toLocaleString('en-IN')}</span>
+                  <span className="text-right"><span className="font-semibold text-slate-900">{formatCurrency(avgPrice)}</span><span className="ml-2 text-xs text-slate-400">({count.toLocaleString('en-IN')})</span></span>
                 </div>
-                <div className="mt-1"><ProgressBar value={count} max={maxTypeCount} color="blue" /></div>
+                <div className="mt-1"><ProgressBar value={avgPrice} max={maxTypePrice} color="amber" /></div>
               </div>
             ))}
           </div>
@@ -326,16 +377,16 @@ export function Dashboard({
         <Card className="p-6">
           <h3 className="text-sm font-semibold text-slate-900">Price Distribution</h3>
           <p className="mt-1 text-xs text-slate-400">Number of properties in each price range</p>
-          <div className="mt-6 flex items-end justify-between gap-2" style={{ height: '200px' }}>
+          <div className="mt-6 flex h-56 items-stretch justify-between gap-2 border-b border-slate-200 px-1 pt-3">
             {bucketData.map((b) => {
               const heightPct = (b.count / maxBucket) * 100;
               return (
-                <div key={b.label} className="flex flex-1 flex-col items-center gap-2">
+                <div key={b.label} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
                   <span className="text-xs font-semibold text-slate-700">{b.count.toLocaleString('en-IN')}</span>
-                  <div className="flex w-full flex-1 items-end">
-                    <div className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-blue-400 transition-all duration-700" style={{ height: `${heightPct}%` }} />
+                  <div className="flex h-36 w-full items-end">
+                    <div className="w-full rounded-t-lg bg-gradient-to-t from-blue-600 to-blue-400 transition-all duration-700" style={{ height: `${Math.max(heightPct, b.count > 0 ? 3 : 0)}%` }} title={`${b.label}: ${b.count.toLocaleString('en-IN')} properties`} />
                   </div>
-                  <span className="text-center text-xs text-slate-500">{b.label}</span>
+                  <span className="text-center text-[10px] leading-tight text-slate-500">{b.label}</span>
                 </div>
               );
             })}
@@ -346,15 +397,15 @@ export function Dashboard({
       {/* Location-wise Average Price + Property Count */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card className="p-6">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <IndianRupee className="h-4 w-4 text-slate-400" /> Average Price by Location (Top 10)
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <IndianRupee className="h-4 w-4 text-slate-400" /> Median Property Price by Location (Top 10)
           </h3>
           <div className="mt-4 space-y-2">
             {topLocalitiesByPrice.map((l) => (
               <div key={l.city} className="flex items-center gap-3">
                 <span className="w-28 truncate text-sm font-medium text-slate-700">{l.city}</span>
-                <div className="flex-1"><ProgressBar value={l.avgPrice} max={maxLocalityPrice} color="amber" /></div>
-                <span className="w-24 text-right text-sm font-semibold text-slate-900">{formatCurrency(l.avgPrice)}</span>
+                <div className="flex-1"><ProgressBar value={l.medianPrice} max={maxLocalityPrice} color="amber" /></div>
+                <span className="w-24 text-right text-sm font-semibold text-slate-900">{formatCurrency(l.medianPrice)}</span>
               </div>
             ))}
           </div>
@@ -390,7 +441,7 @@ export function Dashboard({
                 <th className="px-3 py-2 text-left">Locality</th>
                 <th className="px-3 py-2 text-right">Properties</th>
                 <th className="px-3 py-2 text-right">Avg Price</th>
-                <th className="px-3 py-2 text-right">Avg Rate/sqft</th>
+                <th className="px-3 py-2 text-right">Avg Rate/sq ft</th>
               </tr>
             </thead>
             <tbody>
@@ -407,17 +458,6 @@ export function Dashboard({
         </div>
       </Card>
 
-      {/* Database Insights CTA */}
-      <div className="flex cursor-pointer items-center justify-between rounded-2xl border border-emerald-200 bg-emerald-50 p-5 transition-all hover:bg-emerald-100" onClick={() => onNavigate('insights')}>
-        <div className="flex items-center gap-4">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-emerald-600 text-white"><Database className="h-6 w-6" /></div>
-          <div>
-            <p className="text-sm font-semibold text-emerald-900">Database Insights</p>
-            <p className="text-xs text-emerald-700">Aggregation pipelines, index performance, and database statistics</p>
-          </div>
-        </div>
-        <ArrowRight className="h-5 w-5 text-emerald-600" />
-      </div>
     </div>
   );
 }

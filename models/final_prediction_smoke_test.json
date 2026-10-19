@@ -1,0 +1,36 @@
+{
+  "inputs": {
+    "Area": 1800,
+    "BHK_Model": 3,
+    "Model_Flat_Type": "Apartment",
+    "Status": "Ready to move",
+    "RERA Approval": "Approved by RERA",
+    "Society": "",
+    "Builder Name": ""
+  },
+  "cases": [
+    {
+      "name": "ordinary",
+      "locality": "Sector 79",
+      "status": 200,
+      "predicted_price_rupees": 17694807.86,
+      "predicted_rate_per_sqft": 9830.45,
+      "fallback_used": ["Society", "Builder Name"],
+      "fallback_source": "comparable locality/property type/BHK data",
+      "coverage_warning": null
+    },
+    {
+      "name": "edge",
+      "locality": "Sector 42",
+      "status": 200,
+      "predicted_price_rupees": 214589662.71,
+      "predicted_rate_per_sqft": 119216.48,
+      "fallback_used": ["Society", "Builder Name"],
+      "fallback_source": "locality data",
+      "coverage_warning": "Limited training data: No exact 3-BHK Apartment records were found for Sector 42. The estimate uses broader training patterns and may be less reliable."
+    }
+  ],
+  "rate_formula": "predicted_price_rupees / Area",
+  "model_unchanged": true,
+  "dataset_unchanged": true
+}

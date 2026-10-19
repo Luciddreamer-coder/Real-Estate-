@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -75,6 +75,7 @@ export function Button({
   size = 'md',
   type = 'button',
   className = '',
+  disabled = false,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -82,6 +83,7 @@ export function Button({
   size?: 'sm' | 'md' | 'lg';
   type?: 'button' | 'submit';
   className?: string;
+  disabled?: boolean;
 }) {
   const variants: Record<string, string> = {
     primary: 'bg-slate-900 text-white hover:bg-slate-800',
@@ -98,6 +100,7 @@ export function Button({
     <button
       type={type}
       onClick={onClick}
+      disabled={disabled}
       className={`inline-flex items-center justify-center gap-2 rounded-xl font-medium transition-colors disabled:opacity-50 ${variants[variant]} ${sizes[size]} ${className}`}
     >
       {children}
@@ -109,6 +112,7 @@ export function Input({
   label,
   value,
   onChange,
+  onBlur,
   type = 'text',
   placeholder = '',
   prefix,
@@ -117,11 +121,30 @@ export function Input({
   label: string;
   value: string | number;
   onChange: (v: string) => void;
+  onBlur?: () => void;
   type?: 'text' | 'number';
   placeholder?: string;
   prefix?: string;
   suffix?: string;
 }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [draftValue, setDraftValue] = useState(String(value));
+
+  useEffect(() => {
+    if (type !== 'number' || document.activeElement !== inputRef.current) {
+      setDraftValue(String(value));
+    }
+  }, [value, type]);
+
+  const handleBlur = () => {
+    if (type === 'number') {
+      const normalized = draftValue === '' ? '0' : String(Number(draftValue));
+      setDraftValue(normalized);
+      onChange(normalized);
+    }
+    onBlur?.();
+  };
+
   return (
     <div>
       <label className="block text-sm font-medium text-slate-700 mb-1">{label}</label>
@@ -130,10 +153,15 @@ export function Input({
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">{prefix}</span>
         )}
         <input
+          ref={inputRef}
           type={type}
-          value={value}
+          value={type === 'number' ? draftValue : value}
           placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => {
+            if (type === 'number') setDraftValue(e.target.value);
+            onChange(e.target.value);
+          }}
+          onBlur={handleBlur}
           className={`w-full rounded-xl border border-slate-300 bg-white py-2 text-sm text-slate-900 outline-none transition-colors focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10 ${
             prefix ? 'pl-7' : 'pl-3'
           } ${suffix ? 'pr-10' : 'pr-3'}`}

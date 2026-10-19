@@ -1,6 +1,6 @@
 import { BarChart3, TrendingUp, MapPin, Building2, Bed, IndianRupee, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import type { Property } from '@/types';
-import { calculateMetrics, formatCurrency, formatPct } from '@/lib/finance';
+import { formatCurrency } from '@/lib/finance';
 import { Card, EmptyState, ProgressBar, Badge } from '@/components/ui';
 
 interface LocalityAgg {
@@ -133,13 +133,10 @@ export function Analytics({ properties }: { properties: Property[] }) {
     }))
     .sort((a, b) => b.count - a.count);
 
-  // ─── Investment metrics ───────────────────────────────────────────────
-  const metrics = properties.map((p) => ({ p, m: calculateMetrics(p) }));
-  const reraApproved = properties.filter((p) => p.rera_approved).length;
-  const avgCapRate = metrics.reduce((s, x) => s + x.m.capRate, 0) / metrics.length;
-  const avgCashOnCash = metrics.reduce((s, x) => s + x.m.cashOnCashReturn, 0) / metrics.length;
+  // ─── Dataset-backed summary metrics ──────────────────────────────────
   const avgRatePerSqft = properties.reduce((s, p) => s + p.rate_per_sqft, 0) / properties.length;
   const avgPrice = properties.reduce((s, p) => s + p.price, 0) / properties.length;
+  const avgArea = properties.reduce((s, p) => s + p.square_feet, 0) / properties.length;
 
   // ─── Price distribution ───────────────────────────────────────────────
   const priceBuckets = [
@@ -173,6 +170,11 @@ export function Analytics({ properties }: { properties: Property[] }) {
       {/* Summary Stats */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="p-5">
+          <p className="text-sm font-medium text-slate-500">Total Properties</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{properties.length.toLocaleString('en-IN')}</p>
+          <p className="mt-1 text-xs text-slate-400">All listings</p>
+        </Card>
+        <Card className="p-5">
           <p className="text-sm font-medium text-slate-500">Average Price</p>
           <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(avgPrice)}</p>
           <p className="mt-1 text-xs text-slate-400">Across all listings</p>
@@ -183,14 +185,9 @@ export function Analytics({ properties }: { properties: Property[] }) {
           <p className="mt-1 text-xs text-slate-400">Price per square foot</p>
         </Card>
         <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">RERA Approved</p>
-          <p className="mt-1 text-2xl font-bold text-emerald-600">{reraApproved.toLocaleString('en-IN')} / {properties.length.toLocaleString('en-IN')}</p>
-          <p className="mt-1 text-xs text-slate-400">{formatPct((reraApproved / properties.length) * 100)} of total</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">Localities Covered</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{localityAggs.length.toLocaleString('en-IN')}</p>
-          <p className="mt-1 text-xs text-slate-400">Sectors / areas</p>
+          <p className="text-sm font-medium text-slate-500">Average Area</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{Math.round(avgArea).toLocaleString('en-IN')} sqft</p>
+          <p className="mt-1 text-xs text-slate-400">Across all listings</p>
         </Card>
       </div>
 
@@ -372,21 +369,6 @@ export function Analytics({ properties }: { properties: Property[] }) {
         </div>
       </Card>
 
-      {/* Investment Overview */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">Avg Cap Rate</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{formatPct(avgCapRate)}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">Avg Cash-on-Cash</p>
-          <p className={`mt-1 text-2xl font-bold ${avgCashOnCash >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{formatPct(avgCashOnCash)}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-sm font-medium text-slate-500">Total Market Value</p>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(properties.reduce((s, p) => s + p.price, 0))}</p>
-        </Card>
-      </div>
     </div>
   );
 }

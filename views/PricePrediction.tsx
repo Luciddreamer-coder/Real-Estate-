@@ -1,93 +1,159 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Brain, TrendingUp, Loader2, Trophy, ArrowRight, BarChart3 } from 'lucide-react';
 import type { Property } from '@/types';
-import { trainAllModels, encodeInput, buildEncoder, type TrainedModels, type FeatureEncoder } from '@/lib/ml';
+import { buildEncoder, type TrainedModels, type FeatureEncoder } from '@/lib/ml';
 import { formatCurrency, formatCurrencyDetailed } from '@/lib/finance';
 import { Card, Button, Badge, ProgressBar } from '@/components/ui';
 
 interface PredictionInput {
   locality: string;
-  area: number;
-  bedrooms: number;
-  bathrooms: number;
+  area: string;
+  bhk: number;
   propertyType: string;
   status: string;
+  reraApproval: string;
+  society: string;
+  builder: string;
 }
 
-export function PricePrediction({ properties }: { properties: Property[] }) {
+interface ModelInputDiagnostics {
+  unknown_categories?: string[];
+  category_presence?: Record<string, boolean>;
+  feature_order?: string[];
+}
+
+export function PricePrediction({ properties, refreshKey = 0 }: { properties: Property[]; refreshKey?: number }) {
   const [trained, setTrained] = useState<TrainedModels | null>(null);
   const [encoder, setEncoder] = useState<FeatureEncoder | null>(null);
   const [loading, setLoading] = useState(true);
   const [trainingProgress, setTrainingProgress] = useState('');
+  const [error, setError] = useState('');
   const [input, setInput] = useState<PredictionInput>({
     locality: 'Sector 79',
-    area: 1800,
-    bedrooms: 3,
-    bathrooms: 2,
+    area: '1800',
+    bhk: 3,
     propertyType: 'Apartment',
     status: 'Under Construction',
+    reraApproval: 'Approved by RERA',
+    society: '',
+    builder: '',
   });
   const [predictions, setPredictions] = useState<{ name: string; price: number; metrics: { mae: number; rmse: number; r2: number } }[]>([]);
-  const workerRef = useRef<number>(0);
+  const [fallbackNotice, setFallbackNotice] = useState('');
+  const [coverageWarning, setCoverageWarning] = useState('');
+  const [modelInputWarning, setModelInputWarning] = useState('');
+  const [liveSocieties, setLiveSocieties] = useState<string[]>([]);
+  const [liveBuilders, setLiveBuilders] = useState<string[]>([]);
 
   useEffect(() => {
     if (properties.length === 0) return;
 
-    const worker = workerRef.current;
-    setLoading(true);
-
-    const steps = [
-      'Building feature encoder...',
-      'Splitting train/test data (80/20)...',
-      'Training Linear Regression...',
-      'Training Decision Tree...',
-      'Training Random Forest (30 trees)...',
-      'Training Gradient Boosting (50 trees)...',
-      'Comparing model accuracy...',
-    ];
-
-    let stepIdx = 0;
-    const interval = setInterval(() => {
-      if (stepIdx < steps.length) {
-        setTrainingProgress(steps[stepIdx]);
-        stepIdx++;
-      }
-    }, 400);
-
-    // Defer training to next tick so UI can render loading state
-    const timeout = setTimeout(() => {
+    let cancelled = false;
+    const loadModelInfo = async () => {
+      setLoading(true);
+      setTrainingProgress('Loading verified held-out evaluation...');
       const enc = buildEncoder(properties);
-      setEncoder(enc);
-      const result = trainAllModels(properties);
-      setTrained(result);
-      setLoading(false);
-      clearInterval(interval);
-    }, 100);
-
-    return () => {
-      clearInterval(interval);
-      clearTimeout(timeout);
-      workerRef.current = worker + 1;
+      try {
+        const response = await fetch(`${(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '')}/api/model-metrics`);
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? 'Model evaluation is unavailable');
+        if (cancelled) return;
+        const baseline = body.models?.baseline;
+        if (!baseline?.metrics) throw new Error('Baseline evaluation metrics are missing');
+        const model = { name: 'Random Forest Regressor', metrics: baseline.metrics, predict: () => 0 };
+        const reduced = body.models?.without_context;
+        const logPrice = body.models?.log_price;
+        const comparisonModels = reduced?.metrics
+          ? [
+            model,
+            { name: 'Random Forest (without Society/Builder)', metrics: reduced.metrics, predict: () => 0 },
+            ...(logPrice?.metrics ? [{ name: 'Random Forest (log price)', metrics: logPrice.metrics, predict: () => 0 }] : []),
+          ]
+          : [model, ...(logPrice?.metrics ? [{ name: 'Random Forest (log price)', metrics: logPrice.metrics, predict: () => 0 }] : [])];
+        setEncoder(enc);
+        setTrained({ models: comparisonModels, best: model, featureNames: baseline.features ?? [], localities: enc.localities, propertyTypes: enc.propertyTypes, statuses: enc.statuses, priceStats: { min: 0, max: 0, mean: 0, median: 0 } });
+        setError('');
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Model evaluation is unavailable');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     };
+    void loadModelInfo();
+    return () => { cancelled = true; };
   }, [properties]);
 
-  const handlePredict = () => {
+  // A warning belongs to the input combination that produced the last result.
+  // Clear it when those inputs change so an old warning cannot be mistaken for
+  // the newly selected locality/type/BHK combination.
+  useEffect(() => {
+    setPredictions([]);
+    setFallbackNotice('');
+    setCoverageWarning('');
+    setModelInputWarning('');
+  }, [input.locality, input.propertyType, input.status, input.reraApproval, input.area, input.bhk, input.society, input.builder]);
+
+  useEffect(() => {
+    if (!input.locality) return;
+    let cancelled = false;
+    const apiBase = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '');
+    fetch(`${apiBase}/api/prediction-options?locality=${encodeURIComponent(input.locality)}`)
+      .then(async (response) => {
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? 'Prediction options unavailable');
+        if (!cancelled) {
+          setLiveSocieties(Array.from(new Set([
+            ...(Array.isArray(body.societies) ? body.societies : []),
+            ...(Array.isArray(body.all_societies) ? body.all_societies : []),
+          ])));
+          setLiveBuilders(Array.from(new Set([
+            ...(Array.isArray(body.builders) ? body.builders : []),
+            ...(Array.isArray(body.all_builders) ? body.all_builders : []),
+          ])));
+        }
+      })
+      .catch(() => {
+        // Keep the page usable if MongoDB is temporarily unavailable.
+        if (!cancelled) {
+          setLiveSocieties([]);
+          setLiveBuilders([]);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [input.locality, refreshKey]);
+
+  const handlePredict = async () => {
     if (!trained || !encoder) return;
-    const features = encodeInput(
-      input.area,
-      input.bedrooms,
-      input.bathrooms,
-      input.locality,
-      input.propertyType,
-      input.status,
-      encoder,
-    );
-    const results = trained.models.map((m) => ({
-      name: m.name,
-      price: Math.max(0, m.predict(features)),
-      metrics: m.metrics,
-    }));
-    setPredictions(results);
+    const area = Number(input.area);
+    if (!input.area.trim() || !Number.isFinite(area) || area <= 0) {
+      setError('Area must be greater than 0 sqft.');
+      return;
+    }
+    setError('');
+    try {
+      const response = await fetch(`${(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000').replace(/\/$/, '')}/api/predict`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          Area: area, BHK_Model: input.bhk, Locality: input.locality, Status: input.status,
+          'RERA Approval': input.reraApproval,
+          Model_Flat_Type: input.propertyType,
+          ...(input.society ? { Society: input.society } : {}),
+          ...(input.builder ? { 'Builder Name': input.builder } : {}),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? 'Prediction failed');
+      setPredictions([{ name: 'Random Forest Regressor', price: body.predicted_price, metrics: trained.best.metrics }]);
+      setFallbackNotice(body.fallback_notice ?? '');
+      setCoverageWarning(body.coverage_warning ?? '');
+      const inputDiagnostics = body.model_input_diagnostics as ModelInputDiagnostics | undefined;
+      const unknownCategories = inputDiagnostics?.unknown_categories ?? [];
+      setModelInputWarning(body.model_input_warning ?? (unknownCategories.length > 0
+        ? `The selected ${unknownCategories.join(' and ')} value is not represented in the saved model's training categories. The prediction uses broader model patterns.`
+        : ''));
+    } catch (predictionError) {
+      setError(predictionError instanceof Error ? predictionError.message : 'Prediction failed');
+    }
   };
 
   if (loading) {
@@ -98,7 +164,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
             <Brain className="h-8 w-8 animate-pulse" />
           </div>
           <div className="text-center">
-            <p className="text-sm font-semibold text-slate-900">Training ML Models</p>
+          <p className="text-sm font-semibold text-slate-900">Loading ML Model</p>
             <p className="mt-1 text-sm text-slate-500">{trainingProgress || 'Initializing...'}</p>
           </div>
           <div className="w-48">
@@ -106,7 +172,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
               <div className="h-full animate-pulse rounded-full bg-slate-900" style={{ width: '60%' }} />
             </div>
           </div>
-          <p className="text-xs text-slate-400">Training on {properties.length.toLocaleString('en-IN')} properties</p>
+          <p className="text-xs text-slate-400">Using the saved Random Forest pipeline</p>
         </div>
       </div>
     );
@@ -118,7 +184,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
         <h1 className="text-2xl font-bold text-slate-900">Price Prediction</h1>
         <Card className="p-8 text-center">
           <Brain className="mx-auto h-10 w-10 text-slate-300" />
-          <p className="mt-3 text-sm text-slate-500">No data available to train models.</p>
+              <p className="mt-3 text-sm text-slate-500">No data available for prediction.</p>
         </Card>
       </div>
     );
@@ -129,6 +195,12 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
   const sortedPredictions = [...predictions].sort((a, b) => b.metrics.r2 - a.metrics.r2);
   const maxR2 = Math.max(...trained.models.map((m) => m.metrics.r2), 0.01);
   const maxMAE = Math.max(...trained.models.map((m) => m.metrics.mae), 1);
+  const localityProperties = properties.filter((property) => property.city === input.locality);
+  const cachedSocieties = Array.from(new Set(localityProperties.map((property) => property.society.trim()).filter(Boolean))).sort();
+  const cachedBuilders = Array.from(new Set(localityProperties.map((property) => property.state.trim()).filter(Boolean))).sort();
+  const societyOptions = Array.from(new Set([...liveSocieties, ...cachedSocieties])).sort();
+  const builderOptions = Array.from(new Set([...liveBuilders, ...cachedBuilders])).sort();
+  const isPlot = input.propertyType.toLowerCase() === 'plot';
 
   return (
     <div className="space-y-6">
@@ -137,6 +209,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
         <p className="mt-1 text-sm text-slate-500">
           ML-powered property price estimation trained on {properties.length.toLocaleString('en-IN')} Gurugram listings
         </p>
+        <p className="mt-1 text-xs text-slate-400">Metrics shown below come from a reproducible 80/20 held-out evaluation (random state 42).</p>
       </div>
 
       {/* Best Model Badge */}
@@ -224,7 +297,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
               <label className="block text-sm font-medium text-slate-700 mb-1">Locality / Sector</label>
               <select
                 value={input.locality}
-                onChange={(e) => setInput((p) => ({ ...p, locality: e.target.value }))}
+                onChange={(e) => setInput((p) => ({ ...p, locality: e.target.value, society: '', builder: '' }))}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
               >
                 {encoder.localities.map((l) => (
@@ -236,7 +309,7 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
               <label className="block text-sm font-medium text-slate-700 mb-1">Property Type</label>
               <select
                 value={input.propertyType}
-                onChange={(e) => setInput((p) => ({ ...p, propertyType: e.target.value }))}
+                onChange={(e) => setInput((p) => ({ ...p, propertyType: e.target.value, ...(e.target.value.toLowerCase() === 'plot' ? { bhk: 1 } : {}) }))}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
               >
                 {encoder.propertyTypes.map((t) => (
@@ -257,37 +330,66 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
               </select>
             </div>
             <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">RERA Approval</label>
+              <select
+                value={input.reraApproval}
+                onChange={(e) => setInput((p) => ({ ...p, reraApproval: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              >
+                <option value="Approved by RERA">Approved by RERA</option>
+                <option value="Not approved by RERA">Not approved by RERA</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Society <span className="font-normal text-slate-400">(optional)</span></label>
+              <select
+                value={input.society}
+                onChange={(e) => setInput((p) => ({ ...p, society: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              >
+                <option value="">Use training-data fallback</option>
+                {societyOptions.map((society) => <option key={society} value={society}>{society}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Builder <span className="font-normal text-slate-400">(optional)</span></label>
+              <select
+                value={input.builder}
+                onChange={(e) => setInput((p) => ({ ...p, builder: e.target.value }))}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+              >
+                <option value="">Use training-data fallback</option>
+                {builderOptions.map((builder) => <option key={builder} value={builder}>{builder}</option>)}
+              </select>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Area (sqft)</label>
               <input
                 type="number"
+                min="0"
+                max="100000"
+                step="1"
                 value={input.area}
-                onChange={(e) => setInput((p) => ({ ...p, area: Number(e.target.value) }))}
+                onChange={(e) => setInput((p) => ({ ...p, area: e.target.value }))}
                 className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            {!isPlot && (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bedrooms</label>
-                <input
-                  type="number"
-                  value={input.bedrooms}
-                  onChange={(e) => setInput((p) => ({ ...p, bedrooms: Number(e.target.value) }))}
+                <label className="block text-sm font-medium text-slate-700 mb-1">BHK Count</label>
+                <select
+                  value={input.bhk}
+                  onChange={(e) => setInput((p) => ({ ...p, bhk: Number(e.target.value) }))}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                />
+                >
+                  {[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value} BHK</option>)}
+                </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bathrooms</label>
-                <input
-                  type="number"
-                  value={input.bathrooms}
-                  onChange={(e) => setInput((p) => ({ ...p, bathrooms: Number(e.target.value) }))}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                />
-              </div>
-            </div>
+            )}
             <Button onClick={handlePredict} className="w-full">
               <Brain className="h-4 w-4" /> Predict Price
             </Button>
+          {error && <p className="mt-3 text-xs text-rose-600">{error}</p>}
           </div>
         </Card>
 
@@ -313,10 +415,13 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
                   </div>
                 </div>
                 <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
-                  <span>Rate: ₹{Math.round(sortedPredictions[0].price / input.area).toLocaleString('en-IN')}/sqft</span>
+                  <span>Estimated rate: ₹{Math.round(sortedPredictions[0].price / Number(input.area)).toLocaleString('en-IN')}/sqft</span>
                   <span>·</span>
-                  <span>Input: {input.bedrooms} BHK, {input.area.toLocaleString('en-IN')} sqft, {input.locality}</span>
+                  <span>Input: {!isPlot && `${input.bhk} BHK, `}{Number(input.area).toLocaleString('en-IN')} sqft, {input.locality}</span>
                 </div>
+                {fallbackNotice && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{fallbackNotice}</p>}
+                {modelInputWarning && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{modelInputWarning}</p>}
+                {coverageWarning && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{coverageWarning}</p>}
               </div>
 
               {/* All model predictions */}
@@ -338,20 +443,20 @@ export function PricePrediction({ properties }: { properties: Property[] }) {
                       </div>
                       <div className="w-32 text-right">
                         <p className="text-sm font-bold text-slate-900">{formatCurrency(p.price)}</p>
-                        <p className="text-xs text-slate-400">±{formatCurrency(p.metrics.mae)}</p>
+                        <p className="text-xs text-slate-400">Test MAE: {formatCurrency(p.metrics.mae)}</p>
                       </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Price range interpretation */}
+              {/* Evaluation interpretation */}
               <div className="rounded-xl bg-blue-50 p-4">
                 <p className="text-xs font-medium text-blue-900">How to interpret</p>
                 <p className="mt-1 text-xs text-blue-700">
                   The predicted price is an estimate based on {properties.length.toLocaleString('en-IN')} Gurugram listings.
-                  The ±MAE value shows the typical error range. A property priced well below the prediction may be undervalued;
-                  one priced above may be overvalued.
+                  Test MAE is an average evaluation metric, not a guaranteed confidence interval for this individual property.
+                  Estimates may be less reliable for rare localities or unusual luxury properties.
                 </p>
               </div>
             </div>

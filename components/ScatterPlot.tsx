@@ -8,10 +8,11 @@ const TYPE_COLORS: Record<string, string> = {
   Plot: '#f59e0b',
   Villa: '#8b5cf6',
   House: '#ef4444',
+  Penthouse: '#ec4899',
   Studio: '#06b6d4',
 };
 
-const TYPE_OPTIONS = ['All', 'Apartment', 'Floor', 'Plot', 'Villa', 'House'];
+const TYPE_OPTIONS = ['All', 'Apartment', 'Floor', 'Plot', 'Villa', 'House', 'Penthouse', 'Studio'];
 const VIEW_OPTIONS = ['All Properties', 'Typical Properties'] as const;
 
 interface Point {
@@ -136,10 +137,12 @@ export function ScatterPlot({ properties, onSelect }: { properties: Property[]; 
   const minPrice = Math.min(...prices, 0);
   const maxPrice = Math.max(...prices, 1);
 
-  // Trend line
+  // Recalculate the trend line from the full currently visible dataset.
+  // Rendering may sample dots for performance, but the regression must still
+  // reflect the selected property type and view mode accurately.
   const regression = useMemo(() => {
-    return linearRegression(sampledPoints.map((p) => ({ x: p.area, y: p.price })));
-  }, [sampledPoints]);
+    return linearRegression(visiblePoints.map((p) => ({ x: p.area, y: p.price })));
+  }, [visiblePoints]);
 
   // SVG dimensions
   const W = 800;
@@ -208,9 +211,9 @@ export function ScatterPlot({ properties, onSelect }: { properties: Property[]; 
           </select>
         </div>
         <span className="text-xs text-slate-400">
-          {sampledPoints.length.toLocaleString('en-IN')} properties shown
+          {sampledPoints.length.toLocaleString('en-IN')} properties shown of {allPoints.length.toLocaleString('en-IN')} loaded
           {viewMode === 'Typical Properties' && typeFiltered.length > sampledPoints.length && (
-            <span className="ml-1">of {typeFiltered.length.toLocaleString('en-IN')}</span>
+            <span className="ml-1">(current type/view filters applied; dots may be sampled)</span>
           )}
         </span>
       </div>
@@ -242,7 +245,7 @@ export function ScatterPlot({ properties, onSelect }: { properties: Property[]; 
 
           {/* Axis labels */}
           <text x={padL + plotW / 2} y={H - 8} textAnchor="middle" className="fill-slate-600 font-medium" style={{ fontSize: '12px' }}>
-            Area (sqft)
+            Area (sq ft)
           </text>
           <text x={16} y={padT + plotH / 2} textAnchor="middle" className="fill-slate-600 font-medium" style={{ fontSize: '12px', transform: `rotate(-90, 16, ${padT + plotH / 2})` }}>
             Price
@@ -295,7 +298,7 @@ export function ScatterPlot({ properties, onSelect }: { properties: Property[]; 
             <div className="mt-1.5 space-y-0.5 text-slate-600">
               <div className="flex justify-between gap-4"><span>Location:</span><span className="font-medium text-slate-900">{hovered.city}</span></div>
               {hovered.bhk > 0 && <div className="flex justify-between gap-4"><span>BHK:</span><span className="font-medium text-slate-900">{hovered.bhk} BHK</span></div>}
-              <div className="flex justify-between gap-4"><span>Area:</span><span className="font-medium text-slate-900">{formatNumber(hovered.area)} sqft</span></div>
+              <div className="flex justify-between gap-4"><span>Area:</span><span className="font-medium text-slate-900">{formatNumber(hovered.area)} sq ft</span></div>
               <div className="flex justify-between gap-4"><span>Price:</span><span className="font-medium text-slate-900">{formatCurrency(hovered.price)}</span></div>
               <div className="flex justify-between gap-4"><span>₹/sqft:</span><span className="font-medium text-slate-900">₹{Math.round(hovered.ratePerSqft).toLocaleString('en-IN')}</span></div>
             </div>

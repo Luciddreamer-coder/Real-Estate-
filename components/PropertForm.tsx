@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import type { Property, PropertyType, PropertyStatus } from '@/types';
-import { Modal, Input, Select, Textarea, Button } from './ui';
+import { Modal, Input, Select, Button } from './ui';
+import { formatCurrency } from '@/lib/finance';
 
-const PROPERTY_TYPES: PropertyType[] = ['Apartment', 'Floor', 'Plot', 'Villa', 'House', 'Studio'];
+const PROPERTY_TYPES: PropertyType[] = ['Apartment', 'Floor', 'Plot', 'Villa', 'House', 'Penthouse', 'Studio'];
 const PROPERTY_STATUSES: PropertyStatus[] = ['Ready to move', 'Under Construction', 'New', 'Resale'];
 
 export function createEmptyProperty(): Property {
@@ -18,7 +19,7 @@ export function createEmptyProperty(): Property {
     down_payment_pct: 20, interest_rate: 8.5, loan_term_years: 20,
     closing_costs: 100000, rehab_cost: 0, notes: '',
     created_at: new Date().toISOString(),
-    rate_per_sqft: 0, rera_approved: false, society: '',
+    rate_per_sqft: 5000, rera_approved: false, society: '',
   };
 }
 
@@ -30,18 +31,49 @@ export function PropertyForm({
 }: {
   open: boolean;
   onClose: () => void;
-  onSave: (p: Property) => void;
+  onSave: (p: Property) => Promise<void> | void;
   initial: Property;
 }) {
   const [form, setForm] = useState<Property>(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const update = (field: keyof Property, value: string | number | boolean) => {
-    setForm((f) => ({ ...f, [field]: value }));
+    setForm((f) => {
+      const next = { ...f, [field]: value };
+      if (field === 'square_feet' || field === 'rate_per_sqft') {
+        const area = field === 'square_feet' ? Number(value) : f.square_feet;
+        const rate = field === 'rate_per_sqft' ? Number(value) : f.rate_per_sqft;
+        if (area > 0 && rate > 0) next.price = area * rate;
+      }
+      return next;
+    });
   };
 
-  const handleSubmit = () => {
-    if (!form.address.trim() || !form.city.trim()) return;
-    onSave(form);
+  const handleSubmit = async () => {
+    setError('');
+    if (!form.address.trim() || !form.city.trim()) {
+      setError('Property name/description and locality are required.');
+      return;
+    }
+    if (!Number.isFinite(form.square_feet) || form.square_feet <= 0 || !Number.isFinite(form.rate_per_sqft) || form.rate_per_sqft <= 0) {
+      setError('Area and rate per sqft must be greater than zero.');
+      return;
+    }
+
+    const pricingChanged = form.square_feet !== initial.square_feet || form.rate_per_sqft !== initial.rate_per_sqft;
+    const propertyToSave = pricingChanged
+      ? { ...form, price: form.square_feet * form.rate_per_sqft }
+      : form;
+
+    setSaving(true);
+    try {
+      await onSave(propertyToSave);
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : 'Unable to save property.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -79,45 +111,18 @@ export function PropertyForm({
             <Input label="BHK Count" type="number" value={form.bedrooms} onChange={(v) => update('bedrooms', Number(v))} />
             <Input label="Area (sqft)" type="number" value={form.square_feet} onChange={(v) => update('square_feet', Number(v))} />
             <Input label="Rate / sqft" type="number" prefix="₹" value={form.rate_per_sqft} onChange={(v) => update('rate_per_sqft', Number(v))} />
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <p className="text-xs font-medium text-slate-500">Total Price (calculated)</p>
+              <p className="mt-1 text-sm font-semibold text-slate-900">{formatCurrency(form.price)}</p>
+              <p className="mt-1 text-xs text-slate-400">Area × Rate per sqft</p>
+            </div>
           </div>
         </section>
 
-        <section>
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Purchase & Rental</h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Purchase Price" type="number" prefix="₹" value={form.price} onChange={(v) => update('price', Number(v))} />
-            <Input label="Monthly Rent" type="number" prefix="₹" value={form.monthly_rent} onChange={(v) => update('monthly_rent', Number(v))} />
-            <Input label="Closing Costs" type="number" prefix="₹" value={form.closing_costs} onChange={(v) => update('closing_costs', Number(v))} />
-            <Input label="Rehab / Repairs" type="number" prefix="₹" value={form.rehab_cost} onChange={(v) => update('rehab_cost', Number(v))} />
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Operating Expenses</h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Property Tax (annual)" type="number" prefix="₹" value={form.property_tax_annual} onChange={(v) => update('property_tax_annual', Number(v))} />
-            <Input label="Insurance (annual)" type="number" prefix="₹" value={form.insurance_annual} onChange={(v) => update('insurance_annual', Number(v))} />
-            <Input label="Maintenance (monthly)" type="number" prefix="₹" value={form.hoa_monthly} onChange={(v) => update('hoa_monthly', Number(v))} />
-            <Input label="Vacancy Rate" type="number" suffix="%" value={form.vacancy_rate} onChange={(v) => update('vacancy_rate', Number(v))} />
-            <Input label="Maintenance Rate" type="number" suffix="%" value={form.maintenance_rate} onChange={(v) => update('maintenance_rate', Number(v))} />
-            <Input label="Management Rate" type="number" suffix="%" value={form.management_rate} onChange={(v) => update('management_rate', Number(v))} />
-          </div>
-        </section>
-
-        <section>
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Financing</h3>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <Input label="Down Payment" type="number" suffix="%" value={form.down_payment_pct} onChange={(v) => update('down_payment_pct', Number(v))} />
-            <Input label="Interest Rate" type="number" suffix="%" value={form.interest_rate} onChange={(v) => update('interest_rate', Number(v))} />
-            <Input label="Loan Term" type="number" suffix="yrs" value={form.loan_term_years} onChange={(v) => update('loan_term_years', Number(v))} />
-          </div>
-        </section>
-
-        <Textarea label="Notes" value={form.notes} onChange={(v) => update('notes', v)} rows={3} />
-
+        {error && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700" role="alert">{error}</p>}
         <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={handleSubmit}>Save Property</Button>
+          <Button variant="primary" onClick={handleSubmit} disabled={saving}>{saving ? 'Saving...' : 'Save Property'}</Button>
         </div>
       </div>
     </Modal>
