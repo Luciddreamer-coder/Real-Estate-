@@ -306,17 +306,18 @@ export function MongoDBInsights({ properties, refreshKey }: { properties: Proper
               {rateAgg.map((l) => (
                 <div
                   key={l.label}
-                  className="grid grid-cols-[9rem_minmax(14rem,1fr)_9rem_8rem_4rem_15rem] items-center gap-3"
+                  className="grid items-center gap-3"
+                  style={{ gridTemplateColumns: '9rem minmax(14rem, 1fr) 10rem 9rem 5rem 15rem' }}
                 >
                   <span className="truncate text-sm font-medium text-slate-700">{l.label}</span>
                   <ProgressBar value={l.avgRate} max={maxRate} color="emerald" />
-                  <span className="text-right text-xs text-slate-500">
+                  <span className="whitespace-nowrap text-left text-xs text-slate-500">
                     median ₹{Math.round(l.medianRate ?? l.avgRate).toLocaleString('en-IN')}
                   </span>
-                  <span className="text-right text-sm font-semibold text-slate-900">
+                  <span className="whitespace-nowrap text-left text-sm font-semibold text-slate-900">
                     avg ₹{Math.round(l.avgRate).toLocaleString('en-IN')}
                   </span>
-                  <span className="text-right text-xs text-slate-400">({l.count})</span>
+                  <span className="whitespace-nowrap text-left text-xs text-slate-400">({l.count})</span>
                   <div className="flex min-h-6 items-center justify-start">
                     {l.smallSample && <Badge color="amber">Small sample</Badge>}
                     {l.reviewHighRate && <Badge color="rose">Review unusually high rate</Badge>}

@@ -224,7 +224,7 @@ function App() {
         </div>
       </aside>
 
-      <div className="flex-1 lg:pl-64">
+      <div className="min-w-0 flex-1 overflow-x-hidden lg:pl-64">
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur lg:hidden">
           <button onClick={() => setSidebarOpen(true)} className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100">
             <Menu className="h-5 w-5" />
@@ -236,7 +236,7 @@ function App() {
           <div className="w-9" />
         </header>
 
-        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <main className="mx-auto min-w-0 max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
           {renderView()}
         </main>
       </div>
