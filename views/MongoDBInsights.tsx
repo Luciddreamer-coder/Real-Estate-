@@ -301,20 +301,29 @@ export function MongoDBInsights({ properties, refreshKey }: { properties: Proper
           <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
             <TrendingUp className="h-4 w-4 text-slate-400" /> Average and Median Rate/sq.ft by Locality (Top 15)
           </h3>
-          <div className="mt-4 space-y-2">
-            {rateAgg.map((l) => (
-              <div key={l.label} className="flex items-center gap-3">
-                <span className="w-28 truncate text-sm font-medium text-slate-700">{l.label}</span>
-                <div className="flex-1">
+          <div className="mt-4 overflow-x-auto">
+            <div className="min-w-[920px] space-y-2">
+              {rateAgg.map((l) => (
+                <div
+                  key={l.label}
+                  className="grid grid-cols-[9rem_minmax(14rem,1fr)_9rem_8rem_4rem_15rem] items-center gap-3"
+                >
+                  <span className="truncate text-sm font-medium text-slate-700">{l.label}</span>
                   <ProgressBar value={l.avgRate} max={maxRate} color="emerald" />
+                  <span className="text-right text-xs text-slate-500">
+                    median ₹{Math.round(l.medianRate ?? l.avgRate).toLocaleString('en-IN')}
+                  </span>
+                  <span className="text-right text-sm font-semibold text-slate-900">
+                    avg ₹{Math.round(l.avgRate).toLocaleString('en-IN')}
+                  </span>
+                  <span className="text-right text-xs text-slate-400">({l.count})</span>
+                  <div className="flex min-h-6 items-center justify-start">
+                    {l.smallSample && <Badge color="amber">Small sample</Badge>}
+                    {l.reviewHighRate && <Badge color="rose">Review unusually high rate</Badge>}
+                  </div>
                 </div>
-                <span className="w-28 text-right text-xs text-slate-500">median ₹{Math.round(l.medianRate ?? l.avgRate).toLocaleString('en-IN')}</span>
-                <span className="w-28 text-right text-sm font-semibold text-slate-900">avg ₹{Math.round(l.avgRate).toLocaleString('en-IN')}</span>
-                <span className="w-16 text-right text-xs text-slate-400">({l.count})</span>
-                {l.smallSample && <Badge color="amber">Small sample</Badge>}
-                {l.reviewHighRate && <Badge color="rose">Review unusually high rate</Badge>}
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         </Card>
       </div>
